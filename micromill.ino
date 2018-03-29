@@ -4,7 +4,7 @@
  *** 
  *** This software is licensed under GNU GPL V3
  ***
- *** XYZ-Axis CNC / Engraver firmware using 28BYJ steppers with ULN2003 driver
+ *** XY-Axis CNC / Engraver firmware using 28BYJ steppers with ULN2003 driver
  ***
  *** G-Code implementation see Appendix A. Supported sender is Universal G-Code Sender from Will Winder.
  *** 
@@ -90,12 +90,10 @@
 //Stepper pins 
 byte stepperX_pins[4]={2,3,4,5};  //maps to ULN 1-4 
 byte stepperY_pins[4]={6,7,8,9};  //maps to ULN 4-1
-byte stepperZ_pins[4]={10,11,12,13}; //maps to ULN1-4  
 
 
 #define ENDSWITCH_X     A1  
 #define ENDSWITCH_Y     A3
-#define ENDSWITCH_Z     A0
   
 #define PIN_MISC        A2  //used for a signal led or something like that
 
@@ -118,24 +116,20 @@ byte stepperZ_pins[4]={10,11,12,13}; //maps to ULN1-4
 //see Appendix B, Mill construction - used by G21
 #define X_STEPS_permm  5095 
 #define Y_STEPS_permm  5095
-#define Z_STEPS_permm  165
 
 //outdated inches, still used, G20
 #define X_STEPS_perInch 129413
 #define Y_STEPS_perInch 129413
-#define Z_STEPS_perInch   4191
 
 //build room 8x10x-2cm
 //#define X_MAX_POS 407600 //80mm
 //#define Y_MAX_POS 509500 //100mm
 #define X_MAX_POS 510000 //110mm
 #define Y_MAX_POS 610000 //120mm
-#define Z_MIN_POS -3300  //20mm (!Z inverted)
 
 //this is where the endswitch is located
 #define X_MIN_POS -10000 //2mm
 #define Y_MIN_POS -10000 //2mm
-#define Z_MAX_POS 200    //1.5mm 
 
 #define X_TOOLCHANGE_POS 600000 //120 mm
 
@@ -148,25 +142,18 @@ byte stepperZ_pins[4]={10,11,12,13}; //maps to ULN1-4
 //still is slip increase min_delay by one. 
 #define STEPPERX_MIN_DELAY 0
 #define STEPPERY_MIN_DELAY 0
-#define STEPPERZ_MIN_DELAY 9
 
 //max delays - see Appendix C for considerations
-//Z delay 200 means 41 sec per 1mm ~0.024mm/sec FR 1.4
 //XY delay 40 means 254 sec per 1mm ~0.004 mm/sec, FR 0.235
 //so a combined XY MIN FR would be 0.33 
 #define STEPPERX_MAX_DELAY 40
 #define STEPPERY_MAX_DELAY 40
-#define STEPPERZ_MAX_DELAY 200
-
-//default drill delay / speed 0.06mm/sec FR ~3.6
-#define Z_DRILL_SPEED 100
 
 //feedrate per axis in mm/min 
 //one step is 1250us which is 800 steps/sec or 48k/min
 //resulting in a feedrate of 9.42 mm/min at max speed. 
 #define MAX_X_FEEDRATE 9.42  //these are the mechanical
 #define MAX_Y_FEEDRATE 9.42  //limits due to the mills
-#define MAX_Z_FEEDRATE 29.09 //construction 
  
 //table max feedrate in mm/min. 
 #define MAX_XY_FEEDRATE 13.32 
@@ -196,8 +183,8 @@ unsigned long time_main,time_disposition,time_display;
 //stepper sequence cw / ccw  halfstep mode 
 byte stepper_sequence_clw[8] = {B01000, B01100, B00100, B00110, B00010, B00011, B00001, B01001};
 byte stepper_sequence_ccw[8] = {B00001, B00011, B00010, B00110, B00100, B01100, B01000, B01001};
-byte stepperX_spos=0,stepperY_spos=0,stepperZ_spos=0,steps_X_step=0,steps_Y_step=0,steps_Z_step=0;
-long current_steps_X_pos = 0,current_steps_Z_pos=0;
+byte stepperX_spos=0,stepperY_spos=0,steps_X_step=0,steps_Y_step=0;
+long current_steps_X_pos = 0;
 boolean tool_status=0,fan_status=0;
 
 
@@ -205,18 +192,14 @@ boolean stepperX_enabled=0;
 boolean stepperX_endswitch=0;
 boolean stepperY_enabled=0;
 boolean stepperY_endswitch=0;
-boolean stepperZ_enabled=0;
-boolean stepperZ_endswitch=0;
   
 boolean steppers_enable =TRUE; 
 boolean machine_idle   = TRUE; 
  
 volatile long int steps_X_goto = 0;
 volatile long int steps_Y_goto = 0;
-volatile long int steps_Z_goto = 0;
 volatile long int steps_X_pos = 0;
 volatile long int steps_Y_pos = 0;
-volatile long int steps_Z_pos = 0;
   
 #define CONTROL_SERIAL 0
 #define CONTROL_INTERNAL 1
@@ -226,31 +209,25 @@ byte control_mode = CONTROL_INTERNAL;
 #define MM   1
 unsigned int steps_X_perunit = X_STEPS_permm; 
 unsigned int steps_Y_perunit = Y_STEPS_permm;
-unsigned int steps_Z_perunit = Z_STEPS_permm; 
   
 //review - obsolete - relace by #define
 unsigned long X_max_steps = X_MAX_POS; //80mm 
 unsigned long Y_max_steps = Y_MAX_POS; //100mm
-unsigned long Z_max_steps = Z_MAX_POS;   //20m
 
 //delay is is set by each move command.   
 byte stepperX_delay = STEPPERX_MIN_DELAY; 
 byte stepperY_delay = STEPPERY_MIN_DELAY;
-byte stepperZ_delay = STEPPERZ_MIN_DELAY;
   
 //the steppers max speed is fixed to steppers min delay 
 //since it costs 3 bytes it stays for better reading
 byte X_max_speed = STEPPERX_MIN_DELAY;
 byte Y_max_speed = STEPPERY_MIN_DELAY;
-byte Z_max_speed = STEPPERZ_MIN_DELAY;
 
 //default work speeds for G1,2,3 
 //if F param is given in a G, this overrides only for current line
-//if F is given with XYZ coords it affects all three speeds, if only
-//Z is given only Z is affected.  - review: feedrates from producers 
+//if F is given with XY coords it affects all three speeds, if only
 byte X_work_speed = stepperX_delay + 3; 
 byte Y_work_speed = stepperY_delay + 3;  // 0.05mm/sec FR 3.1
-byte Z_work_speed = stepperZ_delay + 11; //~0.25mm/sec FR 15
   
 float feedrate = MAX_X_FEEDRATE; //obsolete, stats only
   
@@ -263,8 +240,6 @@ boolean cp_absolute = TRUE;          //default G90.1/91.1
 boolean unit_is_mm = TRUE; //the default unit is mm
   
 volatile unsigned int machine_init_delay = 0;
-double  translate_Z_offset=0; //with translation, add/sub the offset from 
-                            //the incoming Z coordinate to get it into bounds
 boolean toolchange_procedure = FALSE;
 boolean tool_motor = OFF;
 boolean fan_motor = OFF;
@@ -273,11 +248,9 @@ boolean tool_auto_off = FALSE;
   //misc
 #define WPOS_X  steps_X_goto/(float)steps_X_perunit
 #define WPOS_Y  steps_Y_goto/(float)steps_Y_perunit
-#define WPOS_Z  steps_Z_goto/(float)steps_Z_perunit
  
 #define MPOS_X steps_X_pos/(float)steps_X_perunit
 #define MPOS_Y steps_Y_pos/(float)steps_Y_perunit
-#define MPOS_Z steps_Z_pos/(float)steps_Z_perunit
 
 #define EMERGENCY_HOMING_SIGNAL 252
 
@@ -300,7 +273,6 @@ void setup(void) {
   analogReference(DEFAULT);
 
 //PINS SETUP
-  pinMode(ENDSWITCH_Z,INPUT); //A0 ENDSWITCH_Z
   pinMode(ENDSWITCH_X,INPUT); //A1 ENDSWITCH_X
   pinMode(ENDSWITCH_Y,INPUT); //A3 ENDSWITCH_Y
     
@@ -319,11 +291,10 @@ void setup(void) {
   //set the steppers pins
   for(int i=0;i<4;i++) pinMode(stepperX_pins[i],OUTPUT);
   for(int i=0;i<4;i++) pinMode(stepperY_pins[i],OUTPUT);
-  for(int i=0;i<4;i++) pinMode(stepperZ_pins[i],OUTPUT);
   
   //set all positions and gotos to 0 - review: em switch
-  stepperX_spos=0; stepperY_spos=0; stepperZ_spos=0;
-  steps_X_step=0;  steps_Y_step=0;  steps_Z_step=0;
+  stepperX_spos=0; stepperY_spos=0;
+  steps_X_step=0;  steps_Y_step=0;
   
   Serial.begin(SERIAL_SPEED);
   
@@ -380,14 +351,8 @@ void core(void){
        
 //homing is first - wait until steppers have reached endswitches
 if(control_mode == CONTROL_INTERNAL){ 
-
-   // Z works in negative space only
-   if(stepperZ_enabled==FALSE ) steps_Z_goto++; //slowly drive to endswitch pos
-  
    if(stepperX_enabled==FALSE) steps_X_goto=steps_X_goto -10; //drive to endswitch pos
-        
    if(stepperY_enabled==FALSE) steps_Y_goto = steps_Y_goto -10; //drive to endswitch pos
- 
  
 //Rearm endswitches - not time critical. There always is a gap between on / off due to switch mechanics.
 //the endswitch "pressed" means we reached MIN (Z MAX) position. Do not go beyond, machine must hard stop here
@@ -397,10 +362,6 @@ if(control_mode == CONTROL_INTERNAL){
 //so this should be the "true" 0 position, but better 0 is a little more of so the swithes are 
 //positively rearmed at 0 position.  Set X_MIN/Y_MIN/Z_MAX appropriate.
 
-   if(stepperZ_endswitch==TRUE){
-         if(digitalRead(ENDSWITCH_Z)==HIGH) stepperZ_endswitch=FALSE; // normal operation
-         if(steps_Z_goto > 0) steps_Z_goto = 0; //go to 0 position
-         } 
   //the x switch may need a replacement
   if(stepperX_endswitch==TRUE){
          if(digitalRead(ENDSWITCH_X)==HIGH) stepperX_endswitch=FALSE; // normal operation
@@ -417,8 +378,7 @@ if(control_mode == CONTROL_INTERNAL){
  
 if(!homing_done)
   if(steps_X_goto == 0 && steps_X_pos==0 
-     && steps_Y_goto==0 && steps_Y_pos==0 
-     && steps_Z_goto==0 && steps_Z_pos ==0){ homing_done = TRUE; }
+     && steps_Y_goto==0 && steps_Y_pos==0){ homing_done = TRUE; }
 
  
                                    
@@ -500,19 +460,11 @@ void doSteps(){
                   steps_Y_pos  = steps_Y_goto;
                   stepperY_enabled = 1;
                   }
-    if(stepperZ_endswitch==0)
-       if(digitalRead(ENDSWITCH_Z)==LOW){
-                  stepperZ_endswitch=TRUE;
-                  steps_Z_goto = Z_MAX_POS;
-                  steps_Z_pos  = steps_Z_goto;
-                  stepperZ_enabled = 1;
-                  }
     
     //for the homing run we need to go under min pos. the endswitches save it here
     //and reference the min pos as exact as they can.
     if(stepperX_endswitch && steps_X_goto < X_MIN_POS) steps_X_goto = X_MIN_POS; 
     if(stepperY_endswitch && steps_Y_goto < Y_MIN_POS) steps_Y_goto = Y_MIN_POS;
-    if(stepperZ_endswitch && steps_Z_goto > Z_MAX_POS) steps_Z_goto = Z_MAX_POS;
  #endif
  
     if(steps_X_goto > X_MAX_POS){
@@ -520,18 +472,14 @@ void doSteps(){
                else  { steps_X_goto=X_MAX_POS; }
             }
     if(steps_Y_goto > Y_MAX_POS) steps_Y_goto=Y_MAX_POS;
-    if(steps_Z_goto < Z_MIN_POS) steps_Z_goto=Z_MIN_POS;
 
-     if(steps_Z_goto > steps_Z_pos) doStepZ(1,1);
-     if(steps_Z_goto < steps_Z_pos) doStepZ(1,0); 
-      
      if(steps_X_goto > steps_X_pos) doStepX(1,1);
      if(steps_X_goto < steps_X_pos) doStepX(1,0);  
   
      if(steps_Y_goto > steps_Y_pos) doStepY(1,1);
      if(steps_Y_goto < steps_Y_pos) doStepY(1,0);
 
-     if(steps_X_goto == steps_X_pos && steps_Y_goto == steps_Y_pos && steps_Z_goto == steps_Z_pos) machine_idle = TRUE;
+     if(steps_X_goto == steps_X_pos && steps_Y_goto == steps_Y_pos) machine_idle = TRUE;
   
        
   }
@@ -573,36 +521,16 @@ void doStepY(boolean s_step, boolean s_direction){
  steps_Y_step=0;   
   }
   
-void doStepZ(boolean s_step, boolean s_direction){
-  if(!s_step) return;
-  if(++steps_Z_step < stepperZ_delay) return;
-  
-  if(s_direction){
-    if(++stepperZ_spos>7) stepperZ_spos=0;
-    for(byte i=0;i<4;i++)
-      if(steppers_enable) digitalWrite(stepperZ_pins[i],bitRead(stepper_sequence_ccw[stepperZ_spos],i));
-    steps_Z_pos++;
-    
-    } else {
-    if(++stepperZ_spos>7) stepperZ_spos=0;
-    for(byte i=0;i<4;i++)
-      if(steppers_enable) digitalWrite(stepperZ_pins[i],bitRead(stepper_sequence_clw[stepperZ_spos],i));
-    steps_Z_pos--;
-    }
- steps_Z_step=0;   
-  }
-  
 //set all stepper pins to off - saving power  
 void steppersPowersave() {
   if(steps_X_goto == steps_X_pos ) for(byte i=0;i<4;i++) digitalWrite(stepperX_pins[i],0);
   if(steps_Y_goto == steps_Y_pos ) for(byte i=0;i<4;i++) digitalWrite(stepperY_pins[i],0);
-  if(steps_Z_goto == steps_Z_pos ) for(byte i=0;i<4;i++) digitalWrite(stepperZ_pins[i],0);
   }
   
 //need to wait until the set goto is reached
 void waitForDisposition(){
  
- while(steps_X_pos != steps_X_goto || steps_Y_pos != steps_Y_goto || steps_Z_pos != steps_Z_goto ){
+ while(steps_X_pos != steps_X_goto || steps_Y_pos != steps_Y_goto){
      machine_idle = FALSE;
      doDisplay();
      }
@@ -832,9 +760,6 @@ void machineInit(){//test the homing condition
          
     }//for parts
 
-    //Z translation - offset needs to be set 
-    if(Z<9999 && translate_Z_offset!=0 ) { Z=Z+translate_Z_offset;  }
-
 #ifdef DEBUG
     Serial.print(F("DEBUG:")); Serial.print(N);Serial.print(":");
     Serial.print("G:");Serial.print(G);Serial.print(":");
@@ -876,8 +801,7 @@ void machineInit(){//test the homing condition
      }
  
    if(M == 2|| M == 30) { //end program - reset settings, turn off things - review
-     setStepperDelays(X_max_speed,Y_max_speed,Z_max_speed);
-     steps_Z_goto = 0; 
+     setStepperDelays(X_max_speed,Y_max_speed);
      Serial.println(F("[***END PROGRAM** - resume Z]"));
      toolControl(OFF);
      fanControl(OFF);
@@ -889,7 +813,6 @@ void machineInit(){//test the homing condition
      cp_absolute = TRUE; //reset to default
      command_last_line = 0;
      unit_is_mm = MM; 
-     translate_Z_offset = 0.0;
      
 #ifdef DEBUG
      Serial.println(F("[M02 ***PROGRAM ENDED***]"));
@@ -911,8 +834,6 @@ void machineInit(){//test the homing condition
       if(!toolchange_procedure){
             waitForDisposition();
             sendError(F("TOOLCHANGE OPERATION]"));
-            current_steps_Z_pos=steps_Z_pos;
-            steps_Z_goto = 0;
             waitForDisposition();
             tool_status= tool_motor;
             fan_status = fan_motor;
@@ -927,7 +848,6 @@ void machineInit(){//test the homing condition
             waitForDisposition();
             toolControl(tool_motor);
             fanControl(fan_motor);
-            steps_Z_goto = current_steps_Z_pos;
             waitForDisposition();
             toolchange_procedure = FALSE;
             return 0;
@@ -946,9 +866,9 @@ void machineInit(){//test the homing condition
      
     
     //Z-translator - if Z is from 20mm to 0 M934 P-20.0 - review: no sanity check for values!
-    if(M==934) {  if(P==0) return -1;  translate_Z_offset=P; return 0; }
+    if(M==934) {  if(P==0) return -1;  return 0; }
         
-    if(M==935) {  translate_Z_offset = 0.0; return 0;       }
+    if(M==935) {  return 0;       }
 
     //if a file is canceled and then resent, the toggle toggled wrong. 
     if(M==942) { tool_auto_off = ON; return 0; }
@@ -963,16 +883,12 @@ void machineInit(){//test the homing condition
     //see if we have a limit violation
     if(!check_X_limit(getSteps(steps_X_pos,steps_X_perunit,X,this_dimension_absolute))) return -10;
     if(!check_Y_limit(getSteps(steps_Y_pos,steps_Y_perunit,Y,this_dimension_absolute))) return -10;
-    //use the Z translation feature with care 
-    //Serial.print(" Z:");Serial.print(Z);Serial.print(" sZ:");Serial.println(abs(Z)* steps_Z_perunit);
-    if(!check_Z_limit(getSteps(steps_Z_pos,steps_Z_perunit,Z,this_dimension_absolute))) return -10;  //Z works only in negative Quadrant
     //the circle center may be out of bounds
 
     
     if(G == 0){ 
-      setStepperDelays(X_max_speed,Y_max_speed,Z_max_speed);
+      setStepperDelays(X_max_speed,Y_max_speed);
 
-      if(Z<9999) steps_Z_goto=getSteps(steps_Z_pos,steps_Z_perunit,Z,this_dimension_absolute);   
       waitForDisposition();  
 
       if(tool_auto_off) toolControl(OFF);
@@ -981,7 +897,6 @@ void machineInit(){//test the homing condition
       if(Y<9999) steps_Y_goto=getSteps(steps_Y_pos,steps_Y_perunit,Y,this_dimension_absolute);
 #ifdef DEBUG
       Serial.print("G0 X:");Serial.print(steps_X_goto);Serial.print(" Y:");Serial.print(steps_Y_goto);
-      Serial.print(" Z:");Serial.println(steps_Z_goto);
       sendSettings();
 #endif
       waitForDisposition();
@@ -993,12 +908,7 @@ void machineInit(){//test the homing condition
       waitForDisposition(); //make sure the last command is done 
       long x=steps_X_pos;
       long y=steps_Y_pos;
-      long z=steps_Z_pos;
-      setStepperDelays(X_work_speed,Y_work_speed,Z_work_speed); //set default work speeds
-     if(Z < 9999) { 
-        if(FR>0) stepperZ_delay = calculateDelay(FR, steps_Z_perunit,STEPPERZ_MAX_DELAY);
-        z=getSteps(steps_Z_pos,steps_Z_perunit,Z,this_dimension_absolute);
-        }
+      setStepperDelays(X_work_speed,Y_work_speed); //set default work speeds
       if(X < 9999) {
        if(FR>0) stepperX_delay = calculateDelay(FR, steps_X_perunit,STEPPERX_MAX_DELAY);
        x=getSteps(steps_X_pos,steps_X_perunit,X,this_dimension_absolute);
@@ -1009,18 +919,17 @@ void machineInit(){//test the homing condition
        }
       
 #ifdef DEBUG
-      Serial.print("G1 goto X:");;Serial.print(x);Serial.print(" Y:");Serial.print(y);Serial.print(" Z:");Serial.println(z);
+      Serial.print("G1 goto X:");;Serial.print(x);Serial.print(" Y:");Serial.print(y);
       sendSettings();
 #endif
       if(tool_auto_off==TRUE) toolControl(ON);
-      return doLine(x,y,z,FR);
+      return doLine(x,y,0,FR);
      }
 
    if(G == 2||G==3){
-      long  stepsX=steps_X_pos,stepsY=steps_X_pos,stepsZ=steps_Z_pos,stepsI=steps_X_pos,stepsJ=steps_Y_pos;
+      long  stepsX=steps_X_pos,stepsY=steps_X_pos,stepsI=steps_X_pos,stepsJ=steps_Y_pos;
       stepsX=getSteps(stepsX,steps_X_perunit,X,this_dimension_absolute);
       stepsY=getSteps(stepsY,steps_Y_perunit,Y,this_dimension_absolute);
-      stepsZ=getSteps(stepsZ,steps_Z_perunit,Z,this_dimension_absolute);
  
       stepsI = getSteps(steps_X_pos,steps_X_perunit,I,this_cp_absolute);
       stepsJ = getSteps(steps_Y_pos,steps_Y_perunit,J,this_cp_absolute);
@@ -1028,8 +937,8 @@ void machineInit(){//test the homing condition
       if(X==9999||Y==9999||I==9999||J==9999) return -10;     
       waitForDisposition();
       if(tool_auto_off==TRUE) toolControl(ON);
-      if(G==2) { return doArc(stepsI,stepsJ,stepsX,stepsY,stepsZ,0,FR); }
-       else    { return doArc(stepsI,stepsJ,stepsX,stepsY,stepsZ,1,FR); }
+      if(G==2) { return doArc(stepsI,stepsJ,stepsX,stepsY,0,0,FR); }
+       else    { return doArc(stepsI,stepsJ,stepsX,stepsY,0,1,FR); }
      
      return -1;
      }
@@ -1056,12 +965,9 @@ void machineInit(){//test the homing condition
    if(G == 28){ //review: G28 with intermediate point?
       stepperX_delay = X_max_speed;
       stepperY_delay = Y_max_speed;
-      stepperZ_delay = Z_max_speed;
-      if(steps_Z_pos < 0) { steps_Z_goto = 0; waitForDisposition();} //move Z first
        if(tool_auto_off==TRUE) toolControl(OFF);
       steps_X_goto = 0;
       steps_Y_goto = 0;
-      steps_Z_goto = 0;
       waitForDisposition();
       return 0;
      }
@@ -1073,18 +979,7 @@ void machineInit(){//test the homing condition
    //we then move to xy and than z to retract pos.      
    if(G == 81||G == 82 ) { // Drill mode G82 XYZ Rretract Pdwell Ffeed Lrepeats
      long bottom_hole = 0.0;
-     if(Z<9999) { //review: this should always be absolute here, shouldnt it?
-        stepperZ_delay =  Z_DRILL_SPEED ; 
-        if(FR>0) stepperZ_delay = calculateDelay(FR, steps_Z_perunit,STEPPERZ_MAX_DELAY);
-        bottom_hole=getSteps(steps_Z_pos,steps_Z_perunit,Z,this_dimension_absolute);
-        } else return -1;
-        
      long retract_pos = 0;
-     if(R<9999) { 
-        retract_pos=getSteps(steps_Z_pos,steps_Z_perunit,R,this_dimension_absolute);
-        if(!check_Z_limit(retract_pos)) return -10;
-
-        }
       long stepsX=0,stepsY=0;
       stepsX=getSteps(steps_X_pos,steps_X_perunit,X,this_dimension_absolute);
       stepsY=getSteps(steps_Y_pos,steps_Y_perunit,Y,this_dimension_absolute);
@@ -1095,7 +990,6 @@ void machineInit(){//test the homing condition
      if(stepsY!=0x80000000) steps_Y_goto = stepsY;
      waitForDisposition();
 
-     steps_Z_goto = retract_pos;
      waitForDisposition();  
      //minimum dwell time for G81
      int dwell_time = 10; if(P>0.1) dwell_time = P * 1000; //ms
@@ -1107,18 +1001,7 @@ void machineInit(){//test the homing condition
    
    if(G == 83 ) { //Drill with peck G83 XYZ R-retractpos Pdwelltime Qincrperpeck  Lnum repeats
      long bottom_hole = 0.0;
-     if(Z<9999) { //this should always be absolute here, shouldnt it?
-         stepperZ_delay =  Z_DRILL_SPEED ; 
-        if(FR>0) stepperZ_delay = calculateDelay(FR, steps_Z_perunit,STEPPERZ_MAX_DELAY);
-        
-        bottom_hole=getSteps(steps_Z_pos,steps_Z_perunit,Z,this_dimension_absolute);
-        } else return -1; //if not there this is an error 
-        
      long retract_pos = 0;
-     if(R<9999) { 
-        retract_pos=getSteps(steps_Z_pos,steps_Z_perunit,R,this_dimension_absolute);
-        if(!check_Z_limit(retract_pos)) return -10;
-        } else return -1; 
         
       long stepsX=-1,stepsY=-1;
       stepsX=getSteps(steps_X_pos,steps_X_perunit,X,this_dimension_absolute);
@@ -1130,13 +1013,12 @@ void machineInit(){//test the homing condition
      if(stepsY!=0x80000000) steps_Y_goto = stepsY;
      waitForDisposition();
 
-     steps_Z_goto = retract_pos;
      waitForDisposition();  
      
      if(tool_auto_off==TRUE) toolControl(ON);
      
      int dwell_time = 500; if(P>0.1) dwell_time = P * 1000; //ms
-     int incpp = 1; if(Q>0) incpp=Q*steps_Z_perunit; 
+     int incpp = 1; if(Q>0) incpp=Q; 
      int repeats = 2; if(L>2) repeats=L;
      
       //G83 XYZ R-retractpos Pdwelltime Qincrperpeck  Lnum repeats
@@ -1156,13 +1038,11 @@ void machineInit(){//test the homing condition
       waitForDisposition();
       if(X<9999) steps_X_goto = getSteps(steps_X_pos,steps_X_perunit,X,this_dimension_absolute);
       if(Y<9999) steps_Y_goto = getSteps(steps_Y_pos,steps_Y_perunit,Y,this_dimension_absolute);
-      if(Z<9999) steps_Z_goto = getSteps(steps_Z_pos,steps_Z_perunit,Z,this_dimension_absolute);       
       
       waitForDisposition();
       
       if(X<9999) { steps_X_pos=0; steps_X_goto=0; }
       if(Y<9999) { steps_Y_pos=0; steps_Y_goto=0; }
-      if(Z<9999) { steps_Z_pos=0; steps_Z_goto=0; }
       
      return 0;
      }
@@ -1196,11 +1076,9 @@ void setStepsPerUnit(boolean unit){
   if(unit == MM){
     steps_X_perunit = X_STEPS_permm;
     steps_Y_perunit = Y_STEPS_permm;
-    steps_Z_perunit = Z_STEPS_permm;
     } else {
     steps_X_perunit = X_STEPS_perInch;
     steps_Y_perunit = Y_STEPS_perInch;
-    steps_Z_perunit = Z_STEPS_perInch;    
     }
 }
 
@@ -1243,17 +1121,10 @@ int grblCommand(char *n){
     if(y_pos<0 && y_pos<Y_MIN_POS) return FALSE;
    return TRUE;
    }
- boolean check_Z_limit(long z_pos){ //pos in steps 
-    if(z_pos==0x80000000) return TRUE;
-    if(z_pos>0 && z_pos>Z_MAX_POS) return FALSE;
-    if(z_pos<0 && z_pos<Z_MIN_POS) return FALSE;
-   return TRUE;
-   }
 
-void  setStepperDelays(byte x,byte y,byte z){
+void  setStepperDelays(byte x,byte y){
       stepperX_delay =  x;
       stepperY_delay =  y;
-      stepperZ_delay =  z;
   }
   
 //this is a bit stupid command since the individual G commands better should
@@ -1264,7 +1135,6 @@ void  setStepperDelays(byte x,byte y,byte z){
    
    X_work_speed = calculateDelay(fr,steps_X_perunit,STEPPERX_MAX_DELAY);
    Y_work_speed = calculateDelay(fr,steps_Y_perunit,STEPPERY_MAX_DELAY);
-   Z_work_speed = calculateDelay(fr,steps_Z_perunit,STEPPERZ_MAX_DELAY);
    feedrate = fr;
 #ifdef DEBUG
   sendSettings();
@@ -1337,14 +1207,12 @@ int doLine(long x1, long y1,long z1,float fr){
 
   if(x1==0x80000000) x1=steps_X_pos;
   if(y1==0x80000000) y1=steps_Y_pos;
-  if(z1==0x80000000) z1=steps_Z_pos;
+  if(z1==0x80000000) z1=0;
   
-  //if its a single Z move just move it 
-  if(x1==steps_X_pos&&y1==steps_Y_pos&&z1!=steps_Z_pos) {steps_Z_goto=z1; waitForDisposition(); return 0; }
   
   long x0 = steps_X_pos;
   long y0 = steps_Y_pos;
-  long z0 = steps_Z_pos;
+  long z0 = 0;
   long dx=0,dy=0,dz=0;
   
   int sx=0,sy=0,sz=0;
@@ -1372,22 +1240,17 @@ int doLine(long x1, long y1,long z1,float fr){
   Serial.print("doLine: x=");Serial.print(x0);Serial.print(" y=");Serial.print(y0);
         Serial.print(" x1=");Serial.print(x1);Serial.print(" y1=");Serial.print(y1);
         Serial.print(" dx=");Serial.print(dx);Serial.print(" dy=");Serial.print(dy);
-        Serial.print("Z0:"); Serial.print(z0);Serial.print(" Z1:"); Serial.print(z1);
-        Serial.print(" dz:");Serial.print(dz);Serial.print(" SZ:");Serial.print(stepsz);
         Serial.print(" xf=");Serial.print(xf,8);Serial.print(" yf=");Serial.print(yf,8);
         Serial.print(" stepsx=");Serial.print(stepsx);Serial.print(" stepsy=");Serial.print(stepsy);
-        Serial.print(" stepsz=");Serial.println(stepsz);
 #endif
  
   for(;;){
     int zc=0;
     steps_X_goto = steps_X_goto + stepsx;
     steps_Y_goto = steps_Y_goto + stepsy;
-    if(dz !=0 && zc++>=stepsz){zc=0; steps_Z_goto+=sz; }
 #ifdef LINE_DEBUG
     Serial.print("L: x:");Serial.print(steps_X_goto);
     Serial.print(" y:");Serial.print(steps_Y_goto);
-    Serial.print(" z:");Serial.println(steps_Z_goto);
 #endif
     waitForDisposition();
  
@@ -1401,7 +1264,6 @@ int doLine(long x1, long y1,long z1,float fr){
  #ifdef LINE_DEBUG
  Serial.print("doLine done:x1=");Serial.print(x1);
             Serial.print(" y1=");Serial.println(y1); 
-            Serial.print(" z1=");Serial.println(z1);
  #endif
  steps_X_goto = x1; //be sure to set the correct position
  steps_Y_goto = y1; 
@@ -1442,7 +1304,7 @@ Serial.println("ARC PROC.");
    
   double theta=to_angle-from_angle;
  
-  long nx=steps_X_pos, ny=steps_Y_pos,nk=steps_Z_pos;
+  long nx=steps_X_pos, ny=steps_Y_pos,nk=0;
   double angle=from_angle;
   double dt=(theta/180.0)*0.5; // 0.5 deg steps 
   long dk =0;
@@ -1573,41 +1435,12 @@ return 0;
 }
 //Drill mode - G82 XYZ Rretract Pdwell Ffeed Lrepeats
 int doDrill(long bottom_hole,long retract_pos,int dwell_time,int repeats){
-  long dwell_timer;
-  steps_Z_goto=retract_pos;
-  waitForDisposition();
-
-  while(repeats-->0){
-    
-    steps_Z_goto = bottom_hole;
-    waitForDisposition();
-    dwell_timer = millis() + dwell_time;
-    while(dwell_timer > millis()) doDisplay();
-
-    byte zd=stepperZ_delay;
-    stepperZ_delay = Z_max_speed;
-    steps_Z_goto = retract_pos;
-    waitForDisposition();
-    stepperZ_delay = zd;
-    
-    }
 return 0;
 }
 
 //Peck mode -  G83 XYZ R-retractpos Pdwelltime Qincrperpeck  Lnum repeats
 //review: incpp and repeats parameters
 int doPeck(long bottom_hole,long retract_pos, int dwell_time, int incpp, int repeats){
-  long delta = ceil(abs(bottom_hole)-abs(retract_pos));
-  long steps_per_peck = ceil(delta / repeats);
-  Serial.print("Peck-BH:");Serial.print(bottom_hole);Serial.print(" St:");Serial.print(steps_per_peck);
-  Serial.print(" incpp:");Serial.print(incpp);Serial.print(" Delta:");Serial.print(delta);
-  Serial.print(" rep:");Serial.println(repeats);
-  while(repeats-->1){
-        Serial.print("Peck drill to Z:");Serial.println(bottom_hole+(steps_per_peck*repeats));
-        doDrill(bottom_hole+(steps_per_peck*repeats),retract_pos,dwell_time,0);
-        }
-  doDrill(bottom_hole,retract_pos,dwell_time,0);
-  
 return 0;
 }
 
@@ -1664,19 +1497,15 @@ void sendHelp(){
 #endif
       if(n==100||n==255) { Serial.print(F("$100="));Serial.print((float)steps_X_perunit,3);Serial.println(F(" (x, step/mm)")); }
       if(n==101||n==255) { Serial.print(F("$101="));Serial.print((float)steps_Y_perunit,3);Serial.println(F(" (y, step/mm)")); }
-      if(n==102||n==255) { Serial.print(F("$102="));Serial.print((float)steps_Z_perunit,3);Serial.println(F(" (z, step/mm)")); }
       if(n==110||n==255) { Serial.print(F("$110="));Serial.print(MAX_X_FEEDRATE);Serial.println(F(" (x max rate, mm/min)")); }
       if(n==111||n==255) { Serial.print(F("$111="));Serial.print(MAX_Y_FEEDRATE);Serial.println(F(" (y max rate, mm/min)")); }
-      if(n==112||n==255) { Serial.print(F("$112="));Serial.print(MAX_Z_FEEDRATE);Serial.println(F(" (z max rate, mm/min)")); }
 #ifdef GRBL_FAKE_FULL
       if(n==120||n==255) Serial.println(F("$120=1.000 (x accel, mm/sec^2)")); //not applicable - fixed speeds
       if(n==121||n==255) Serial.println(F("$121=1.000 (y accel, mm/sec^2)")); //not applicable
-      if(n==122||n==255) Serial.println(F("$122=1.000 (z accel, mm/sec^2)")); //not applicable
 #endif
       setStepsPerUnit(MM); //force units to be mm
       if(n==130||n==255) { Serial.print(F("$130="));Serial.print((float)X_max_steps/(float)steps_X_perunit,3);Serial.println(F(" (x max travel, mm)")); }
       if(n==131||n==255) { Serial.print(F("$131="));Serial.print((float)Y_max_steps/(float)steps_Y_perunit,3);Serial.println(F(" (y max travel, mm)")); }
-      if(n==132||n==255) { Serial.print(F("$132="));Serial.print((float)Z_max_steps/(float)steps_Z_perunit,3);Serial.println(F(" (z max travel, mm)")); }
       setStepsPerUnit(unit_is_mm); //reset units to what it was
 }
  
@@ -1686,11 +1515,9 @@ void sendStatus(){
                   else      Serial.print("Busy,");
      Serial.print("MPos:"); Serial.print(MPOS_X,4);
           Serial.print(",");Serial.print(MPOS_Y,4);
-          Serial.print(",");Serial.print(MPOS_Z,4);
           Serial.print(",");
         Serial.print("WPos:"); Serial.print(WPOS_X,4);
           Serial.print(",");Serial.print(WPOS_Y,4);
-          Serial.print(",");Serial.print(WPOS_Z,4);
         Serial.println(">");   
       status_request = FALSE;
   }
@@ -1714,7 +1541,6 @@ void checkMode(){
     Serial.print(F("FR "));
     Serial.print(F(" X:"));Serial.print(calculateFeedrate(X_work_speed, steps_X_perunit));
     Serial.print(F(" Y:"));Serial.print(calculateFeedrate(Y_work_speed, steps_Y_perunit));
-    Serial.print(F(" Z:"));Serial.println(calculateFeedrate(Z_work_speed, steps_Z_perunit));
     Serial.print(F("XY coords "));
     if(dimension_absolute) Serial.println(F("abs"));
       else                 Serial.println(F("rel"));
@@ -1726,7 +1552,6 @@ void checkMode(){
     if(!steppers_enable) Serial.println(enable_string);
       else               Serial.println(disable_string);
     if(tool_auto_off==TRUE) Serial.println(F("Tool auto on"));
-    if(translate_Z_offset != 0) { Serial.print(F("Z Translation:")); Serial.println(translate_Z_offset);}
 
     
   }
