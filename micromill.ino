@@ -81,7 +81,7 @@
 //* Machine specific parameters, construction related
 //* *************************************************
 
-#define STEPPER_INTERVAL 250 //1250us for timer intr, 1250us 800Hz -> 100Hz/turn max speed 
+#define STEPPER_INTERVAL 1250 //1250us for timer intr, 1250us 800Hz -> 100Hz/turn max speed 
                              //may be set down to 250 for testing reasons w/o motors
 
 //max steps per sec = 1/interval 
